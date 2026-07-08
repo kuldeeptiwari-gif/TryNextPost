@@ -345,16 +345,18 @@ namespace TryNextPost.Application.IServices.Class
 
         public async Task<LoginSuccessResponse> RegisterAsync(RegisterRequest request, string ipAddress)
         {
-            if (request.Password != request.ConfirmPassword)
-                throw new InvalidOperationException("Password and Confirm Password do not match");
+            //if (request.Password != request.ConfirmPassword)
+            //    throw new InvalidOperationException("Password and Confirm Password do not match");
+
+            var fullName = $"{request.FirstName} {request.LastName}".Trim();
 
             var result = await _identityService.CreateUserAsync(
-                request.Email, request.Password, request.FullName, request.Mobile);
+                request.Email, request.Password, fullName, request.Mobile);
 
             if (!result.Succeeded)
                 throw new InvalidOperationException(string.Join(", ", result.Errors));
 
-            await _emailService.SendWelcomeEmail(request.Email, request.FullName);
+            await _emailService.SendWelcomeEmail(request.Email, fullName);
 
             var user = await _identityService.GetUserByPhoneAsync(request.Mobile);
             var roles = await _identityService.GetUserRolesAsync(user.UserId);
