@@ -130,13 +130,15 @@ builder.Services.AddSwaggerGen(options =>
 #region cors
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll",
-        policy =>
-        {
-            policy.AllowAnyOrigin()
-                  .AllowAnyHeader()
-                  .AllowAnyMethod();
-        });
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.WithOrigins(
+                "http://localhost:4200"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
+    });
 });
 #endregion
 
@@ -169,6 +171,7 @@ using (var scope = app.Services.CreateScope())
         });
     }
 
+app.UseCors("AllowAll");
 app.UseHttpsRedirection();
 app.UseMiddleware<ExceptionMiddleware>();
 
