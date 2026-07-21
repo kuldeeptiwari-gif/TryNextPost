@@ -1,15 +1,19 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Azure.Core;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using TryNextPost.Application.DTO;
+using TryNextPost.Application.DTO.Auth;
 using TryNextPost.Application.IServices.Interface;
+using TryNextPost.Application.Services.Interface;
 using TryNextPost.Domain.Common;
 using TryNextPost.Domain.Entities;
 using TryNextPost.Domain.Enums;
@@ -24,9 +28,11 @@ namespace TryNextPost.Infrastructure.Service
         private readonly ISellerKycRepository _sellerKycRep;
         private readonly ISmsService _msService;
         private readonly IOtpRepository _otpRepository;
+        private readonly IIdentityService _identityService;
         private readonly IMemoryCache _cache;
         private readonly IConfiguration _configuration;
-        public SellerKycServices(UserManager<ApplicationUser> userManager, ISellerKycRepository sellerKycRep, ISmsService msService, IOtpRepository otpRepository, IMemoryCache chache, IConfiguration configuration)
+        public SellerKycServices(UserManager<ApplicationUser> userManager, ISellerKycRepository sellerKycRep, ISmsService msService,
+            IIdentityService identityService,IOtpRepository otpRepository, IMemoryCache chache, IConfiguration configuration)
         {
             _userManager = userManager;
             _sellerKycRep = sellerKycRep;
@@ -34,6 +40,7 @@ namespace TryNextPost.Infrastructure.Service
             _otpRepository = otpRepository;
             _cache = chache;
             _configuration = configuration;
+            _identityService = identityService;
         }
 
         public async Task<BaseResponse<object>> AddSellerKycAsync(VerifyAadhaarOtpRequestDto dto, string sellerId)
@@ -57,7 +64,34 @@ namespace TryNextPost.Infrastructure.Service
                     response.Message = SystemMessage.InvalidOtp;
                     return response;
                 }
-                var data = new SellerKYC
+                var data = await _userManager.FindByIdAsync(sellerId);
+
+                var otpEntity = await _otpRepository.GetLatestActiveByMobileAsync(data.PhoneNumber);
+
+                if (otpEntity == null || otpEntity.ExpiryTime < DateTime.UtcNow)
+                    throw new UnauthorizedAccessException(SystemMessage.InvalidOtp);
+
+                if (otpEntity.ExpiryTime < DateTime.UtcNow)
+                    throw new UnauthorizedAccessException(SystemMessage.OtpExpired);
+
+                if (otpEntity.FailedAttempts >= 5)
+                    throw new InvalidOperationException(SystemMessage.RequestNewOtp);
+                var incomingHash = HashOtp(dto.Otp, data.PhoneNumber);
+
+                if (!CryptographicOperations.FixedTimeEquals(
+                        Convert.FromHexString(otpEntity.CodeHash),
+                        Convert.FromHexString(incomingHash)))
+                {
+                    otpEntity.FailedAttempts++;
+                    await _otpRepository.SaveChangesAsync();
+                    throw new InvalidOperationException(SystemMessage.InvalidOtp);
+                }
+
+                otpEntity.IsUsed = true;
+                await _otpRepository.SaveChangesAsync();
+
+                
+                var data1 = new SellerKYC
                 {
                     SellerId = sellerId,
                     AadharLast4Digit = dto.AadhaarNumber.Substring(dto.AadhaarNumber.Length - 4),
@@ -67,7 +101,7 @@ namespace TryNextPost.Infrastructure.Service
                     CreatedAt = DateTime.Now,
                     CreatedBy = sellerId
                 };
-                await _sellerKycRep.AddAsync(data);
+                await _sellerKycRep.AddAsync(data1);
                 var isSaved = await _sellerKycRep.SaveChangesAsync();
                 if (!isSaved)
                 {
